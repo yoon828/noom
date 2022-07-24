@@ -5,9 +5,15 @@ const muteBtn = document.getElementById("mute"); //음소거 설정
 const cameraBtn = document.getElementById("camera"); //화면 설정
 const cameraSelect = document.getElementById("cameras"); //카메라 종류
 
+const call = document.getElementById("call");
+
+call.hidden = true;
+
 let myStream;
 let muted = false;
 let cameraOff = false;
+let roomName;
+let myPeerConnection;
 
 async function getCameras() {
   try {
@@ -25,7 +31,6 @@ async function getCameras() {
       }
       cameraSelect.appendChild(option);
     });
-    console.log(cameras);
   } catch (e) {
     console.log(e);
   }
@@ -55,8 +60,6 @@ async function getMedia(deviceId) {
     console.log(e);
   }
 }
-
-getMedia(); //카메라 setting
 
 //음소거 on/off 함수
 function handleMuteClick() {
@@ -92,3 +95,76 @@ async function handleCameraChange() {
 muteBtn.addEventListener("click", handleMuteClick);
 cameraBtn.addEventListener("click", handleCameraClick);
 cameraSelect.addEventListener("input", handleCameraChange);
+
+//Welcome Form (join a room)
+
+const welcome = document.getElementById("welcome");
+const welcomeForm = welcome.querySelector("form");
+
+async function initCall() {
+  welcome.hidden = true;
+  call.hidden = false;
+  await getMedia();
+  makeConnection();
+}
+
+async function handleWelcomeSubmit(event) {
+  event.preventDefault();
+  const input = welcomeForm.querySelector("input");
+  await initCall();
+  socket.emit("join_room", input.value);
+  roomName = input.value;
+  input.value = "";
+}
+
+welcomeForm.addEventListener("submit", handleWelcomeSubmit);
+
+// Socket Code
+//Peer A는 offer를 생성
+socket.on("welcome", async () => {
+  const offer = await myPeerConnection.createOffer();
+  myPeerConnection.setLocalDescription(offer); //local desc를 설정
+  console.log("sent the offer");
+  //서버에 offer 보내기
+  socket.emit("offer", offer, roomName);
+});
+
+//Peer B는 offer 받기
+socket.on("offer", async (offer) => {
+  myPeerConnection.setRemoteDescription(offer); //peer의 remote desc
+  const answer = await myPeerConnection.createAnswer();
+  myPeerConnection.setLocalDescription(answer); //local desc를 설정
+  socket.emit("answer", answer, roomName);
+});
+
+//peer A에서 answer 받기
+socket.on("answer", (answer) => {
+  myPeerConnection.setRemoteDescription(answer);
+});
+
+//candidate 받기
+socket.on("ice", (ice) => {
+  console.log("receive candidate");
+  myPeerConnection.addIceCandidate(ice);
+});
+
+// RTC Code
+function makeConnection() {
+  myPeerConnection = new RTCPeerConnection();
+  myPeerConnection.addEventListener("icecandidate", handleIce);
+  myPeerConnection.addEventListener("addstream", handleAddStream);
+  myStream
+    .getTracks()
+    .forEach((track) => myPeerConnection.addTrack(track, myStream));
+}
+
+//candidate를 서버에 보내기
+function handleIce(data) {
+  console.log("sent candidate");
+  socket.emit("ice", data.candidate, roomName);
+}
+
+function handleAddStream(data) {
+  const peerFace = document.getElementById("peerFace");
+  peerFace.srcObject = data.stream;
+}
